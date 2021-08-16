@@ -94,7 +94,7 @@ class CRN:
         inlet = {'fuel': [1], 'air':[1]}
         outlet = {6}
         heat_loss={4,5,6}
-        zone = {'ingestion':[1], 'flame1':[2], 'flame2':[3], 'CRZ', 'PRZ', 'exhaust'}
+        zone = {'ingestion':[1], 'flame1':[2], 'flame2':[3], 'CRZ':[5], 'PRZ':[4], 'exhaust':[6]}
         return crn, inlet, outlet, heat_loss
     def combustor(m_fuel,m_air, recirc_ratio, hl1, hl2):
         gas = ct.Solution('gri30.cti')

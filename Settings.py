@@ -17,6 +17,7 @@ class Settings:
         self.vdot_air = 0 # lnpm
         self.T_air = T_heater
         self.T_fuel = 273.15 + 15
+        self.Q_in =0
         self.main()
 
 
@@ -80,6 +81,7 @@ class Settings:
                                       'O2': air.Y[air_species.index('O2')]*self.mdot_air/self.mdot_total,
                                       'N2': air.Y[air_species.index('N2')]*self.mdot_air/self.mdot_total,
                                       'AR': air.Y[air_species.index('AR')]*self.mdot_air/self.mdot_total}
+        self.Q_in = H_mix*self.mdot_total
 
 
 
