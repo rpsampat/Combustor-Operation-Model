@@ -1,6 +1,7 @@
 import numpy as np
 import Settings as st
 import BurnerHead as bh
+import Combustor as comb
 
 
 
@@ -36,6 +37,10 @@ class Run:
         self.fuel = 'CH4'
 
     def const_dilution(self):
+        """
+        Combustor run at constant external dilution but varying equivalence ratio and thermal power
+        :return:
+        """
         phi = self.eq_min
         for i in range(self.eq_range):
             power = self.P_min
@@ -43,6 +48,8 @@ class Run:
                 T_heater = 273.15+600
                 settings = st.Settings(self.fuel, power, phi, T_heater)
                 burner = bh.BurnerHead(settings, T_heater)
+                combustor = comb.Combustor(settings)
+                combustor.heat_loss()
 
                 power = power+self.p_step
 

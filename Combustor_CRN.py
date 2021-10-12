@@ -1,10 +1,42 @@
 import cantera as ct
 import math
+import numpy as np
+from numpy import linalg
 
 class CRN:
 
     def __init__(self):
+        """
+        The combustor is divided into zones. Each zone can contain a number of equal reactors connected in series.
+        """
+        self.zone = {'ingestion': [1], 'flame1': [2], 'flame2': [3], 'CRZ': [5], 'PRZ': [4], 'exhaust': [6]}
+        self.crn_def = {1: [1,0.1], 2: [1,0.1], 3: [1,0.1], 4: [1,0.1], 5: [1,0.1], 6: [1,0.5]}  # {zone id:[number of reactors in zone, zone volume fraction of total combustor volume]///}
+        self.connect = {1: [2], 2: [3], 3: [4, 5, 6], 4: [2], 5: [2]}
+        self.alpha_mat = {1: [1.0], 2: [1.0], 3: [0.33, 0.33, 0.33], 4: [1.0], 5: [1.0]}
+        mass_in =1
+        self.inlet = {1:mass_in}
+        self.massflow = self.mass_balance()
+        self.outlet = [6]
+        heat_loss = {4, 5, 6}
 
+    def mass_balance(self):
+        n_size = len(self.crn_def.keys())
+        coeffmat = np.zeros(n_size,n_size) # matrix of sized to the number of zones
+        for i in range(n_size):
+            # col
+            for j in range(n_size):
+                if j==i:
+                    coeffmat[j][i] = 1.0
+                elif (j+1) in self.connect[i+1]:
+                    ind = self.connect[i+1].index(j+1)
+                    coeffmat[j][i] = -1.0*self.alpha_mat[i+1][ind]
+                else:
+                    pass
+        rhsvect = np.zeros(n_size)
+        for k in self.inlet.keys():
+            rhsvect[k] = self.inlet[k]
+        x = linalg.solve(coeffmat, rhsvect)
+        return x
     def emiss(psr):
         NOx_out = []
         N2O_out = []
@@ -89,23 +121,67 @@ class CRN:
         T_out.append(T_sum / m_sum)
         return NOx_out,CO_out
 
-    def connectivity(self):
-        crn = {1:[2], 2:[3], 3:[4,5,6],4:[2], 5:[2]}
-        inlet = {'fuel': [1], 'air':[1]}
-        outlet = {6}
-        heat_loss={4,5,6}
-        zone = {'ingestion':[1], 'flame1':[2], 'flame2':[3], 'CRZ':[5], 'PRZ':[4], 'exhaust':[6]}
-        return crn, inlet, outlet, heat_loss
-    def combustor(m_fuel,m_air, recirc_ratio, hl1, hl2):
+    def combustor(self,m_fuel,m_air, recirc_ratio, hl1, hl2):
         gas = ct.Solution('gri30.cti')
         air = ct.Solution('air.cti')
         ener = 'on'
-        vol = 0.00039519
+        vol_total = 0.00039519
         m1 = m_fuel#2.56e-5
         m2 = m_air#0.00057425
         m3 = m1 + m2
         fact=100
         valve=[]
+        #Reservoirs
+        gas.TPY = 300, ct.one_atm, {'CH4': 1}
+        res_inlet = ct.Reservoir(gas)
+        res_outlet = ct.Reservoir(gas)
+
+        # Generating dictionary of PSR object
+        combustor_crn={} # {zone:[PSR1,PSR2...],...}
+        for k in self.crn_def.keys():
+            combustor_crn[k]=[]
+            for j in range(self.crn_def[k][0]):
+                psr = ct.IdealGasReactor(gas, energy=ener)
+                psr.volume = vol_total*self.crn_def[k][1]/self.crn_def[k][0]
+                combustor_crn[k].append(psr)
+
+        # Generating mass flow controllers
+        # Note: This implementation does not allow an inlet zone to accept an internal recirculation
+        for i in self.connect.keys():
+            # connect last reactor of current zone 'i' to first reactor of neighbouring zone
+            psr0 = combustor_crn[i][-1]
+            for j in range(len(self.connect[i])):
+                mflow = self.massflow[i - 1] * self.alpha_mat[i][j]
+                n_psr = len(combustor_crn[j])
+                psr1 = combustor_crn[j][0]
+                for m in range(n_psr):
+                    # connecting psr within a zone with mfcs of equal mass flow in series
+                    psr2 = combustor_crn[j][m]
+                    if m==0:
+                        mfc = ct.MassFlowController(psr0,psr1,mdot=mflow)
+                    else:
+                        mfc = ct.MassFlowController(psr1, psr2, mdot=mflow)
+                    psr1 = psr2
+        # inlets
+        for inlet in self.inlet.keys():
+            psr0 = res_inlet
+            n_psr = len(combustor_crn[inlet])
+            psr1 = combustor_crn[inlet][0]
+            mflow = self.inlet[inlet]
+            for m in range(n_psr):
+                # connecting psr within a zone with mfcs of equal mass flow in series
+                psr2 = combustor_crn[inlet][m]
+                if m == 0:
+                    mfc = ct.MassFlowController(psr0, psr1, mdot=mflow)
+                else:
+                    mfc = ct.MassFlowController(psr1, psr2, mdot=mflow)
+                psr1 = psr2
+        # outlets
+        for outlet in self.outlet:
+            mfc = ct.MassFlowController(combustor_crn[outlet][-1], res_outlet, mdot=self.massflow[outlet-1])
+
+
+
         #Fuel res
         gas.TPY = 300, ct.one_atm, {'CH4': 1}
         res_f=ct.Reservoir(gas)

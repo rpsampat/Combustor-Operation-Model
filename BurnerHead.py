@@ -21,8 +21,9 @@ class BurnerHead:
         air = ct.Solution('air.cti')
         air.TP = self.T_air, ct.one_atm
         gas = ct.Solution('gri30.cti')
+        gas.transport_model='Multi'
         gas.TPX = 293.15, ct.one_atm, {'CH4': 1.0}
-        self.vel_nozzle = self.st.mdot_nozzle/(air.density*area_nozzle*self.N)
-        self.vel_nozzle_fuel = self.st.mdot_nozzle_fuel / (gas.density * area_nozzle_fuel * self.N)
+        self.vel_nozzle = self.st.mdot_total/(air.density*area_nozzle*self.N)
+        self.vel_nozzle_fuel = self.st.mdot_fuel / (gas.density * area_nozzle_fuel * self.N)
         self.Re = air.density*self.vel_nozzle*self.nozzle_dia/air.viscosity
         self.Re_fuel = gas.density * self.vel_nozzle_fuel * self.nozzle_dia_fuel / gas.viscosity
