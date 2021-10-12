@@ -3,6 +3,7 @@ import math
 import numpy as np
 from numpy import linalg
 
+
 class CRN:
 
     def __init__(self):
@@ -11,9 +12,12 @@ class CRN:
         """
         self.zone = {'ingestion': [1], 'flame1': [2], 'flame2': [3], 'CRZ': [5], 'PRZ': [4], 'exhaust': [6]}
         self.crn_def = {1: [1,0.1], 2: [1,0.1], 3: [1,0.1], 4: [1,0.1], 5: [1,0.1], 6: [1,0.5]}  # {zone id:[number of reactors in zone, zone volume fraction of total combustor volume]///}
-        self.connect = {1: [2], 2: [3], 3: [4, 5, 6], 4: [2], 5: [2]}
-        self.alpha_mat = {1: [1.0], 2: [1.0], 3: [0.33, 0.33, 0.33], 4: [1.0], 5: [1.0]}
-        mass_in =1
+        self.connect = {1: [2], 2: [3], 3: [4, 5, 6], 4: [2], 5: [2], 6: []}
+        self.alpha_mat = {1: [1.0], 2: [1.0], 3: [0.25, 0.25, 0.5], 4: [1.0], 5: [1.0]}
+        """self.crn_def = {1: [1, 0.5], 2: [1, 0.5]}  # {zone id:[number of reactors in zone, zone volume fraction of total combustor volume]///}
+        self.connect = {1: [2], 2: []}
+        self.alpha_mat = {1: [1.0], 2: []}"""
+        mass_in = 0.008855
         self.inlet = {1:mass_in}
         self.massflow = self.mass_balance()
         self.outlet = [6]
@@ -21,7 +25,7 @@ class CRN:
 
     def mass_balance(self):
         n_size = len(self.crn_def.keys())
-        coeffmat = np.zeros(n_size,n_size) # matrix of sized to the number of zones
+        coeffmat = np.zeros((n_size,n_size)) # matrix of sized to the number of zones
         for i in range(n_size):
             # col
             for j in range(n_size):
@@ -30,14 +34,14 @@ class CRN:
                 elif (j+1) in self.connect[i+1]:
                     ind = self.connect[i+1].index(j+1)
                     coeffmat[j][i] = -1.0*self.alpha_mat[i+1][ind]
-                else:
-                    pass
+
         rhsvect = np.zeros(n_size)
         for k in self.inlet.keys():
-            rhsvect[k] = self.inlet[k]
+            rhsvect[k-1] = self.inlet[k]
         x = linalg.solve(coeffmat, rhsvect)
         return x
-    def emiss(psr):
+
+    def emiss(self,psr):
         NOx_out = []
         N2O_out = []
         CO_out = []
@@ -121,29 +125,29 @@ class CRN:
         T_out.append(T_sum / m_sum)
         return NOx_out,CO_out
 
-    def combustor(self,m_fuel,m_air, recirc_ratio, hl1, hl2):
+    def combustor(self):
         gas = ct.Solution('gri30.cti')
         air = ct.Solution('air.cti')
         ener = 'on'
-        vol_total = 0.00039519
-        m1 = m_fuel#2.56e-5
-        m2 = m_air#0.00057425
-        m3 = m1 + m2
-        fact=100
+        vol_total = 0.01778
+        v_fact=10.0
         valve=[]
+        mfc_rec =[]
         #Reservoirs
-        gas.TPY = 300, ct.one_atm, {'CH4': 1}
+        gas.TPY = 1800.0, ct.one_atm, {'CH4': 1, 'O2': 2.0*1.0, 'N2': 2.0*3.76}
         res_inlet = ct.Reservoir(gas)
         res_outlet = ct.Reservoir(gas)
 
         # Generating dictionary of PSR object
         combustor_crn={} # {zone:[PSR1,PSR2...],...}
+        reactor_net = []
         for k in self.crn_def.keys():
             combustor_crn[k]=[]
             for j in range(self.crn_def[k][0]):
                 psr = ct.IdealGasReactor(gas, energy=ener)
                 psr.volume = vol_total*self.crn_def[k][1]/self.crn_def[k][0]
                 combustor_crn[k].append(psr)
+                reactor_net.append(psr)
 
         # Generating mass flow controllers
         # Note: This implementation does not allow an inlet zone to accept an internal recirculation
@@ -152,15 +156,23 @@ class CRN:
             psr0 = combustor_crn[i][-1]
             for j in range(len(self.connect[i])):
                 mflow = self.massflow[i - 1] * self.alpha_mat[i][j]
-                n_psr = len(combustor_crn[j])
-                psr1 = combustor_crn[j][0]
+                n_psr = len(combustor_crn[j+1])
+                psr1 = combustor_crn[j+1][0]
                 for m in range(n_psr):
                     # connecting psr within a zone with mfcs of equal mass flow in series
-                    psr2 = combustor_crn[j][m]
+                    psr2 = combustor_crn[j+1][m]
                     if m==0:
                         mfc = ct.MassFlowController(psr0,psr1,mdot=mflow)
+                        mfc_rec.append(mfc)
+                        """val = ct.Valve(psr0,psr1)
+                        kv = mflow / v_fact
+                        val.set_valve_coeff(kv)"""
                     else:
                         mfc = ct.MassFlowController(psr1, psr2, mdot=mflow)
+                        mfc_rec.append(mfc)
+                        """val = ct.Valve(psr1, psr2)
+                        kv = mflow / v_fact
+                        val.set_valve_coeff(kv)"""
                     psr1 = psr2
         # inlets
         for inlet in self.inlet.keys():
@@ -173,204 +185,49 @@ class CRN:
                 psr2 = combustor_crn[inlet][m]
                 if m == 0:
                     mfc = ct.MassFlowController(psr0, psr1, mdot=mflow)
+                    mfc_rec.append(mfc)
+                    """val = ct.Valve(psr0, psr1)
+                    kv = mflow / v_fact
+                    val.set_valve_coeff(kv)"""
                 else:
                     mfc = ct.MassFlowController(psr1, psr2, mdot=mflow)
+                    mfc_rec.append(mfc)
+                    """val = ct.Valve(psr1, psr2)
+                    kv = mflow / v_fact
+                    val.set_valve_coeff(kv)"""
                 psr1 = psr2
         # outlets
         for outlet in self.outlet:
             mfc = ct.MassFlowController(combustor_crn[outlet][-1], res_outlet, mdot=self.massflow[outlet-1])
+            mfc_rec.append(mfc)
+            val = ct.Valve(combustor_crn[outlet][-1], res_outlet)
+            kv = self.massflow[outlet-1] / v_fact
+            val.set_valve_coeff(kv)
 
-
-
-        #Fuel res
-        gas.TPY = 300, ct.one_atm, {'CH4': 1}
-        res_f=ct.Reservoir(gas)
-        #Air res
-        gas.TPX = 673.15, ct.one_atm, air.X
-        res_a = ct.Reservoir(gas)
-        #exhaust res
-        gas.TPX = 300, ct.one_atm, air.X
-        res_ex = ct.Reservoir(gas)
-        #PSR
-        gas.TPX = 2500, ct.one_atm, air.X
-        psr1=ct.IdealGasReactor(gas, energy=ener)
-        v1 = 5.56042E-05*0.9
-        #r=gas.destruction_rates
-        #print r
-        psr1.volume=v1
-        psr9 = ct.IdealGasReactor(gas, energy=ener)
-        v9 = 5.56042E-05*0.1
-        psr1.volume = v9
-        psr2 = ct.IdealGasReactor(gas, energy=ener)
-        v2 = 5.56042E-05
-        psr2.volume=v2
-        psr3 = ct.IdealGasReactor(gas, energy=ener)
-        v3 = 5.56042E-05
-        psr3.volume=v3
-        psr4 = ct.IdealGasReactor(gas, energy=ener)
-        v4 = 2.05217E-05
-        psr4.volume=v4
-        w4 = ct.Wall(psr4, res_ex, Q=hl2/3)
-        psr5 = ct.IdealGasReactor(gas, energy=ener)
-        v5 = 2.05217E-05
-        psr5.volume=v5
-        w5 = ct.Wall(psr5, res_ex, Q=hl2/3)
-        psr6 = ct.IdealGasReactor(gas, energy=ener)
-        v6 = 2.05217E-05
-        psr6.volume=v6
-        w6 = ct.Wall(psr6, res_ex, Q=hl2/3)
-        psr7 = ct.IdealGasReactor(gas, energy=ener)
-        v7 = 0.000166813/2
-        psr7.volume=v7
-        w7 = ct.Wall(psr7, res_ex, Q=hl1/2)
-        psr8 = ct.IdealGasReactor(gas, energy=ener)
-        v8 = 0.000166813/2
-        psr8.volume = v8
-        w8 = ct.Wall(psr8, res_ex, Q=hl1/2)
-        #Recirculation flow
-        m_recirc = m3 * recirc_ratio
-        m47 = m_recirc * 0.6
-        m37 = m_recirc * 0.3
-        m28 = m_recirc * 0.1
-        m78 = m47 + m37
-        m8out = m78 + m28
-        m81 = 0.99*m8out
-        m82 = 0.01*m8out
-        m9in = m1
-        m91 = 0.99* m9in
-        m92 = 0.01* m9in
-        m1in = m2+m91+m81
-        m12 = m1in
-        m2in = m12+m82
-        m23 = m2in-m28
-        m3in = m23
-        m34 = m3in-m37
-        m4in = m34
-        m45 = m4in- m47
-        m56=m45
-        mfc01=ct.MassFlowController(res_f,psr9,mdot=m1)
-        val01 = ct.Valve(res_f, psr9)
-        kv= m1/fact
-        val01.set_valve_coeff(kv)
-        mfc91 = ct.MassFlowController(psr9, psr1, mdot=m91)
-        val91 = ct.Valve(psr9, psr1)
-        kv = m91 / fact
-        val91.set_valve_coeff(kv)
-        mfc92 = ct.MassFlowController(psr9, psr2, mdot=m92)
-        val92 = ct.Valve(psr9, psr2)
-        kv = m92 / fact
-        val92.set_valve_coeff(kv)
-        mfc11 = ct.MassFlowController(res_a, psr1, mdot=m2)
-        val11 = ct.Valve(res_a, psr1)
-        kv = m2 / fact
-        val11.set_valve_coeff(kv)
-        mfc12 = ct.MassFlowController(psr1, psr2, mdot=m12)
-        val12 = ct.Valve(psr1,psr2)
-        kv = m12 / fact
-        val12.set_valve_coeff(kv)
-        mfc23 = ct.MassFlowController(psr2, psr3, mdot=m23)
-        val23 = ct.Valve(psr2, psr3)
-        kv = m23 / fact
-        val23.set_valve_coeff(kv)
-        mfc34 = ct.MassFlowController(psr3, psr4, mdot=m34)
-        val34 = ct.Valve(psr3, psr4)
-        kv = m34 / fact
-        val34.set_valve_coeff(kv)
-        mfc45 = ct.MassFlowController(psr4, psr5, mdot=m45)
-        val45 = ct.Valve(psr4, psr5)
-        kv = m45 / fact
-        val45.set_valve_coeff(kv)
-        mfc56 = ct.MassFlowController(psr5, psr6, mdot=m56)
-        val56 = ct.Valve(psr5, psr6)
-        kv = m56 / fact
-        val56.set_valve_coeff(kv)
-        mfc6ex = ct.MassFlowController(psr6, res_ex, mdot=m3)
-        val6ex = ct.Valve(psr6, res_ex)
-        kv = m3 / fact
-        val6ex.set_valve_coeff(kv)
-        #Recirculating flows
-        mfc47 = ct.MassFlowController(psr4, psr7, mdot=m47)
-        val47 = ct.Valve(psr4, psr7)
-        kv = m47 / fact
-        val47.set_valve_coeff(kv)
-        mfc37 = ct.MassFlowController(psr3, psr7, mdot=m37)
-        val37 = ct.Valve(psr3, psr7)
-        kv = m37 / fact
-        val37.set_valve_coeff(kv)
-        mfc28 = ct.MassFlowController(psr2, psr8, mdot=m28)
-        val28 = ct.Valve(psr2, psr8)
-        kv = m28 / fact
-        val28.set_valve_coeff(kv)
-        mfc78 = ct.MassFlowController(psr7, psr8, mdot=m78)
-        val78 = ct.Valve(psr7, psr8)
-        kv = m78 / fact
-        val78.set_valve_coeff(kv)
-        mfc81 = ct.MassFlowController(psr8, psr1, mdot=m81)
-        val81 = ct.Valve(psr8, psr9)
-        kv = m81 / fact
-        val81.set_valve_coeff(kv)
-        mfc82 = ct.MassFlowController(psr8, psr2, mdot=m82)
-        val82 = ct.Valve(psr8, psr2)
-        kv = m82 / fact
-        val82.set_valve_coeff(kv)
-
-        PSR=[psr1,psr2,psr3,psr4,psr5,psr6,psr7,psr8,psr9]
-        gas.TPX = 300.0, ct.one_atm, 'H:1.0'
-        net = ct.ReactorNet(PSR)
-        dt=0.0001
+        net = ct.ReactorNet(reactor_net)
+        print combustor_crn
+        print "MFCs=",len(mfc_rec)
+        dt = 0.0001
         tf=dt
-
-        valve=[val01,val11,val12,val23,val34,val45,val56,val6ex,val47,val37,val28,val78,val81]
-        for i in range(50000):
-            e_max = 0
-            xin = []
-            xfin = []
-            for p in PSR:
-                xin += list(p.thermo.Y)
+        #net.advance_to_steady_state()
+        for i in range(5000):
             net.advance(tf)
-            for p in PSR:
-                xfin += list(p.thermo.Y)
             tf = tf + dt
-            func = []
-            for n in range(len(xin)):
-                func.append(xfin[n] - xin[n])
-            e = []
-            e_div = max(xin)
-            for ind in range(len(func)):
-                # error_cum += (abs(func[ind]) / (xin[ind] + tol)) ** 2
-                e.append((abs(func[ind]) / (e_div)))
-            e_rel = max(e)
-            #print "Error total=", sum(e)
-            index_val = e.index(e_rel)
-            #print "Index=", index_val
-            #print "Y val=", xfin[index_val]
-            if e_rel > e_max:
-                e_max = e_rel
-            #print "Error=", e_max
-            #if e_max <1e-06:
-                #for v in valve:
-                    #v.set_valve_coeff(0)
-            if e_max < 3e-09:
-                break
 
-        nox,co=emiss([PSR[5]])
-        print PSR[5].thermo.T
-        return PSR[5].thermo.T,nox[0],co[0]
+        nox,co = self.emiss([reactor_net[5]])
+        print reactor_net[5].thermo.T
+        return reactor_net[5].thermo.T,nox[0],co[0]
+
 
 if __name__=="__main__":
-    mf = 2.56e-5
-    ma = [0.000493763,0.000574205,0.000642292,0.000725524,0.000829238,0.000909854,0.000940206]
-    recirc=[2.269152216,2.294833333,2.195823353,1.944513981,1.918549708,1.89971123,1.914171843]
-    hl1=[456.6363693,418.4599281,387.7261415,362.757005,320.1807849,297.3384848,284.6751501]
-    hl2=[249.4737448,228.6168433,211.8260808,198.1847145,174.9240857,162.444672,155.5263236]
     T=[]
     nox=[]
     co=[]
-    for i in range(7):
-        t,n,c=combustor(mf,ma[i],recirc[i],hl1[i],hl2[i])
-        T.append(t)
-        nox.append(n)
-        co.append(c)
+    crn = CRN()
+    t,n,c = crn.combustor()
+    T.append(t)
+    nox.append(n)
+    co.append(c)
     print T
     print nox
     print co

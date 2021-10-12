@@ -26,6 +26,7 @@ class Combustor:
         Q_therm = self.settings.P_therm
         Q_in = self.settings.Q_in
         A_comb = 3.14 * self.Dia * 0.49 # m^2
+        vol_comb = (3.14/4.0) * (self.Dia **2.0) * 0.49 # m^3
         A_x = 3.14 * (self.Dia ** 2.0) / 4.0
         epsi = 0.05 # 0.165 gas emissivity:0.05
         e_Rad = self.sigma * A_comb * epsi / 1000.0
@@ -36,3 +37,5 @@ class Combustor:
         root_eff = np.max(roots.real[(abs(roots.imag) < 1e-05) & (roots.real > 0.0)])
         self.T_exhaust = root_eff
         print self.T_exhaust
+        print self.settings.mdot_total
+        print vol_comb
