@@ -8,7 +8,7 @@ import Combustor as comb
 class Run:
 
     def __init__(self):
-        self.P_min = 15
+        self.P_min = 60
         self.P_max = 200
         self.p_step = 5
         self.P_Range = len(np.arange(self.P_min, self.P_max,self.p_step))

@@ -10,17 +10,20 @@ class CRN:
         """
         The combustor is divided into zones. Each zone can contain a number of equal reactors connected in series.
         """
-        self.zone = {'ingestion': [1], 'flame1': [2], 'flame2': [3], 'CRZ': [5], 'PRZ': [4], 'exhaust': [6]}
-        self.crn_def = {1: [1,0.1], 2: [1,0.1], 3: [1,0.1], 4: [1,0.1], 5: [1,0.1], 6: [1,0.5]}  # {zone id:[number of reactors in zone, zone volume fraction of total combustor volume]///}
+        self.zone = {'ingestion': [1], 'flame1': [2], 'flame2': [3], 'PRZ': [4], 'CRZ': [5], 'exhaust': [6]}
+        self.crn_def = {1: [1,0.01], 2: [2,0.145], 3: [2,0.145], 4: [3,0.1], 5: [3,0.1], 6: [2,0.5]}
+        # {zone id:[number of reactors in zone, zone volume fraction of total combustor volume]}
         self.connect = {1: [2], 2: [3], 3: [4, 5, 6], 4: [2], 5: [2], 6: []}
-        self.alpha_mat = {1: [1.0], 2: [1.0], 3: [0.25, 0.25, 0.5], 4: [1.0], 5: [1.0]}
+        self.alpha_mat = {1: [1.0], 2: [1.0], 3: [0.25, 0.25, 0.5], 4: [1.0], 5: [1.0], 6: [1.0]}
+        # alpha_mat= { zone id: [fraction of outlet to zone corresponding to list in self.connect.]..}
         """self.crn_def = {1: [1, 0.5], 2: [1, 0.5]}  # {zone id:[number of reactors in zone, zone volume fraction of total combustor volume]///}
         self.connect = {1: [2], 2: []}
         self.alpha_mat = {1: [1.0], 2: []}"""
-        mass_in = 0.008855
-        self.inlet = {1:mass_in}
+        self.mass_in = 0.0354
+        self.inlet = {1: self.mass_in}
         self.massflow = self.mass_balance()
-        self.outlet = [6]
+        self.outlet = [6]  # list of reactor numbers serving as outlets of the combustor
+        self.vol_comb = 0.01778
         heat_loss = {4, 5, 6}
 
     def mass_balance(self):
@@ -129,24 +132,31 @@ class CRN:
         gas = ct.Solution('gri30.cti')
         air = ct.Solution('air.cti')
         ener = 'on'
-        vol_total = 0.01778
-        v_fact=10.0
+        vol_total = self.vol_comb
+        v_fact=1000.0
         valve=[]
         mfc_rec =[]
         #Reservoirs
-        gas.TPY = 1800.0, ct.one_atm, {'CH4': 1, 'O2': 2.0*1.0, 'N2': 2.0*3.76}
+        gas.TPX = 600.0, ct.one_atm, {'CH4': 0.16, 'O2': (1 - 0.16) * 0.23, 'N2': (1 - 0.16) * 0.77}
         res_inlet = ct.Reservoir(gas)
         res_outlet = ct.Reservoir(gas)
+        psr_test = ct.IdealGasReactor(gas, energy=ener)
+        net_test = ct.ReactorNet([psr_test])
+        net_test.advance_to_steady_state()
+        gas = psr_test.thermo
+
 
         # Generating dictionary of PSR object
-        combustor_crn={} # {zone:[PSR1,PSR2...],...}
+        combustor_crn = {} # {zone:[PSR1,PSR2...],...}
         reactor_net = []
         for k in self.crn_def.keys():
-            combustor_crn[k]=[]
             for j in range(self.crn_def[k][0]):
                 psr = ct.IdealGasReactor(gas, energy=ener)
                 psr.volume = vol_total*self.crn_def[k][1]/self.crn_def[k][0]
-                combustor_crn[k].append(psr)
+                try:
+                    combustor_crn[k].append(psr)
+                except:
+                    combustor_crn[k]=[psr]
                 reactor_net.append(psr)
 
         # Generating mass flow controllers
@@ -156,12 +166,13 @@ class CRN:
             psr0 = combustor_crn[i][-1]
             for j in range(len(self.connect[i])):
                 mflow = self.massflow[i - 1] * self.alpha_mat[i][j]
-                n_psr = len(combustor_crn[j+1])
-                psr1 = combustor_crn[j+1][0]
+                k = self.connect[i][j]
+                n_psr = len(combustor_crn[k])
+                psr1 = combustor_crn[k][0]
                 for m in range(n_psr):
                     # connecting psr within a zone with mfcs of equal mass flow in series
-                    psr2 = combustor_crn[j+1][m]
-                    if m==0:
+                    psr2 = combustor_crn[k][m]
+                    if m == 0:
                         mfc = ct.MassFlowController(psr0,psr1,mdot=mflow)
                         mfc_rec.append(mfc)
                         """val = ct.Valve(psr0,psr1)
@@ -177,8 +188,8 @@ class CRN:
         # inlets
         for inlet in self.inlet.keys():
             psr0 = res_inlet
-            n_psr = len(combustor_crn[inlet])
-            psr1 = combustor_crn[inlet][0]
+            n_psr = len(combustor_crn[inlet])  # number of psrs in zone
+            psr1 = combustor_crn[inlet][0]   # first reactor of inlet zone
             mflow = self.inlet[inlet]
             for m in range(n_psr):
                 # connecting psr within a zone with mfcs of equal mass flow in series
@@ -198,19 +209,20 @@ class CRN:
                 psr1 = psr2
         # outlets
         for outlet in self.outlet:
+            # connecting last reactor of zone to outlet reservoir
             mfc = ct.MassFlowController(combustor_crn[outlet][-1], res_outlet, mdot=self.massflow[outlet-1])
             mfc_rec.append(mfc)
-            val = ct.Valve(combustor_crn[outlet][-1], res_outlet)
+            """val = ct.Valve(combustor_crn[outlet][-1], res_outlet)
             kv = self.massflow[outlet-1] / v_fact
-            val.set_valve_coeff(kv)
+            val.set_valve_coeff(kv)"""
 
         net = ct.ReactorNet(reactor_net)
         print combustor_crn
         print "MFCs=",len(mfc_rec)
-        dt = 0.0001
-        tf=dt
+        dt = 1e-4
+        tf = dt
         #net.advance_to_steady_state()
-        for i in range(5000):
+        for i in range(50000):
             net.advance(tf)
             tf = tf + dt
 
@@ -218,12 +230,48 @@ class CRN:
         print reactor_net[5].thermo.T
         return reactor_net[5].thermo.T,nox[0],co[0]
 
+    def manualcrn(self):
+        # defining network
+        gas = ct.Solution('gri30.cti')
+        #gas.TPY = 294, ct.one_atm, {'CH4': 0.16, 'O2': (1 - 0.16) * 0.23, 'N2': (1 - 0.16) * 0.77}
+        # gas = ct.Solution('h2o2.cti')
+        gas.TPX = 1000.0, ct.one_atm, {'CH4': 0.16, 'O2': (1 - 0.16) * 0.23, 'N2': (1 - 0.16) * 0.77}
+        res_inlet = ct.Reservoir(gas)
+        res_outlet = ct.Reservoir(gas)
+        psr_test = ct.IdealGasReactor(gas, energy='on')
+        net_test = ct.ReactorNet([psr_test])
+        net_test.advance_to_steady_state()
+        gas = psr_test.thermo
+        psr1 = ct.IdealGasReactor(gas, energy='on')
+        psr1.volume = self.vol_comb/2.0
+        #gas.TPY = 1500, ct.one_atm, {'CH4': 0.16, 'O2': (1 - 0.16) * 0.23, 'N2': (1 - 0.16) * 0.77}
+        psr2 = ct.IdealGasReactor(gas, energy='on')
+        psr2.volume = self.vol_comb/2.0
+        #gas.TPY = 600, ct.one_atm, {'CH4': 0.16, 'O2': (1 - 0.16) * 0.23, 'N2': (1 - 0.16) * 0.77}
+        mfc1 = ct.MassFlowController(psr1, psr2, mdot=self.mass_in)
+        mfc2 = ct.MassFlowController(res_inlet, psr1, mdot=self.mass_in)
+        mfc3 = ct.MassFlowController(psr2, res_outlet, mdot=self.mass_in)
+        rn = ct.ReactorNet([psr1,psr2])
+        dt = 1e-4
+        tf = dt
+        # net.advance_to_steady_state()
+        for i in range(50000):
+            rn.advance(tf)
+            tf = tf + dt
+
+        nox, co = self.emiss([psr2])
+        print psr2.thermo.T
+        return psr2.thermo.T, nox[0], co[0]
 
 if __name__=="__main__":
     T=[]
     nox=[]
     co=[]
     crn = CRN()
+    t, n,c = crn.manualcrn()
+    T.append(t)
+    nox.append(n)
+    co.append(c)
     t,n,c = crn.combustor()
     T.append(t)
     nox.append(n)
