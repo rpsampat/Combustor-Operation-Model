@@ -17,7 +17,9 @@ class Settings:
         self.vdot_air = 0 # lnpm
         self.T_air = T_heater
         self.T_fuel = 273.15 + 15
+        self.T_in = 0
         self.Q_in =0
+        self.Y_comp = {}
         self.main()
 
 
@@ -77,11 +79,14 @@ class Settings:
         self.mdot_total = self.mdot_air + self.mdot_fuel
         air.TP = self.T_air, ct.one_atm
         H_mix = (gas.enthalpy_mass*self.mdot_fuel + air.enthalpy_mass * self.mdot_air)/self.mdot_total
-        gas.HPY = H_mix, ct.one_atm, {self.fuel: self.mdot_fuel/self.mdot_total,
-                                      'O2': air.Y[air_species.index('O2')]*self.mdot_air/self.mdot_total,
-                                      'N2': air.Y[air_species.index('N2')]*self.mdot_air/self.mdot_total,
-                                      'AR': air.Y[air_species.index('AR')]*self.mdot_air/self.mdot_total}
+        self.Y_comp = {self.fuel: self.mdot_fuel / self.mdot_total,
+                       'O2': air.Y[air_species.index('O2')] * self.mdot_air / self.mdot_total,
+                       'N2': air.Y[air_species.index('N2')] * self.mdot_air / self.mdot_total,
+                       'AR': air.Y[air_species.index('AR')] * self.mdot_air / self.mdot_total}
+        gas.HPY = H_mix, ct.one_atm, self.Y_comp
         self.Q_in = H_mix*self.mdot_total
+        self.T_in = gas.T
+
 
 
 

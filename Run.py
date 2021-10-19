@@ -9,8 +9,8 @@ class Run:
 
     def __init__(self):
         self.P_min = 60
-        self.P_max = 200
-        self.p_step = 5
+        self.P_max = 100
+        self.p_step = 10
         self.P_Range = len(np.arange(self.P_min, self.P_max,self.p_step))
 
         self.eq_min = 0.6
@@ -49,7 +49,7 @@ class Run:
                 settings = st.Settings(self.fuel, power, phi, T_heater)
                 burner = bh.BurnerHead(settings, T_heater)
                 combustor = comb.Combustor(settings)
-                combustor.heat_loss()
+                combustor.combustor()
 
                 power = power+self.p_step
 

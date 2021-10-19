@@ -2,11 +2,12 @@ import cantera as ct
 import math
 import numpy as np
 from numpy import linalg
+from pathway_analysis import PathwayAnalysis
 
 
 class CRN:
 
-    def __init__(self):
+    def __init__(self,settings,Q_loss,wall_area):
         """
         The combustor is divided into zones. Each zone can contain a number of equal reactors connected in series.
         """
@@ -16,15 +17,20 @@ class CRN:
         self.connect = {1: [2], 2: [3], 3: [4, 5, 6], 4: [2], 5: [2], 6: []}
         self.alpha_mat = {1: [1.0], 2: [1.0], 3: [0.25, 0.25, 0.5], 4: [1.0], 5: [1.0], 6: [1.0]}
         # alpha_mat= { zone id: [fraction of outlet to zone corresponding to list in self.connect.]..}
-        """self.crn_def = {1: [1, 0.5], 2: [1, 0.5]}  # {zone id:[number of reactors in zone, zone volume fraction of total combustor volume]///}
+        """self.crn_def = {1: [1, 0.5], 2: [1, 0.5]}  
+        # {zone id:[number of reactors in zone, zone volume fraction of total combustor volume]///}
         self.connect = {1: [2], 2: []}
         self.alpha_mat = {1: [1.0], 2: []}"""
-        self.mass_in = 0.0354
+        self.mass_in = settings.mdot_total
+        self.T_in = settings.T_in
+        self.Y_comp = settings.Y_comp
         self.inlet = {1: self.mass_in}
         self.massflow = self.mass_balance()
         self.outlet = [6]  # list of reactor numbers serving as outlets of the combustor
         self.vol_comb = 0.01778
-        heat_loss = {4, 5, 6}
+        self.heat_loss = {4:Q_loss, 6: Q_loss}  # {zoneid:heat loss W/m^2}
+        self.wall_area = {4:wall_area/2.0, 6: wall_area/2.0}
+
 
     def mass_balance(self):
         n_size = len(self.crn_def.keys())
@@ -62,12 +68,8 @@ class CRN:
         m_sum = 0
         N_corr_sum = 0
         N_sum = 0
-        species = ['H2', 'H', 'O', 'O2', 'OH', 'H2O', 'HO2', 'H2O2', 'C', 'CH', \
-                   'CH2', 'CH2(S)', 'CH3', 'CH4', 'CO', 'CO2', 'HCO', 'CH2O', \
-                   'CH2OH', 'CH3O', 'CH3OH', 'C2H', 'C2H2', 'C2H3', 'C2H4', 'C2H5', \
-                   'C2H6', 'HCCO', 'CH2CO', 'HCCOH', 'N', 'NH', 'NH2', 'NH3', 'NNH', \
-                   'NO', 'NO2', 'N2O', 'HNO', 'CN', 'HCN', 'H2CN', 'HCNN', 'HCNO', 'HOCN', \
-                   'HNCO', 'NCO', 'N2', 'AR', 'C3H7', 'C3H8', 'CH2CHO', 'CH3CHO']
+        gas = psr[0].thermo
+        species = gas.species_names
         R=8.314
         perc_corr=0.15
         for n in psr:
@@ -137,9 +139,12 @@ class CRN:
         valve=[]
         mfc_rec =[]
         #Reservoirs
-        gas.TPX = 600.0, ct.one_atm, {'CH4': 0.16, 'O2': (1 - 0.16) * 0.23, 'N2': (1 - 0.16) * 0.77}
+        gas.TPX = 300, ct.one_atm, self.Y_comp  # environment gas state definition
+        res_env = ct.Reservoir(gas)  # environment for heat loss at wall
+        gas.TPX = self.T_in, ct.one_atm, self.Y_comp  # inlet gas state definition
         res_inlet = ct.Reservoir(gas)
         res_outlet = ct.Reservoir(gas)
+
         psr_test = ct.IdealGasReactor(gas, energy=ener)
         net_test = ct.ReactorNet([psr_test])
         net_test.advance_to_steady_state()
@@ -150,9 +155,13 @@ class CRN:
         combustor_crn = {} # {zone:[PSR1,PSR2...],...}
         reactor_net = []
         for k in self.crn_def.keys():
+            n_psr = len(self.crn_def[k])
             for j in range(self.crn_def[k][0]):
                 psr = ct.IdealGasReactor(gas, energy=ener)
                 psr.volume = vol_total*self.crn_def[k][1]/self.crn_def[k][0]
+                if k in self.heat_loss.keys():
+                    wall_area = self.wall_area[k]/n_psr
+                    wall = ct.Wall(psr,res_env,A=wall_area,U=self.heat_loss[k])
                 try:
                     combustor_crn[k].append(psr)
                 except:
@@ -228,9 +237,13 @@ class CRN:
 
         nox,co = self.emiss([reactor_net[5]])
         print reactor_net[5].thermo.T
-        return reactor_net[5].thermo.T,nox[0],co[0]
+        return reactor_net[5].thermo.T,nox[0],co[0], combustor_crn
 
     def manualcrn(self):
+        """
+        Manually generated CRN with cantera objects. Typically 2 PSRs to verify if code works.
+        :return:
+        """
         # defining network
         gas = ct.Solution('gri30.cti')
         #gas.TPY = 294, ct.one_atm, {'CH4': 0.16, 'O2': (1 - 0.16) * 0.23, 'N2': (1 - 0.16) * 0.77}
@@ -263,11 +276,22 @@ class CRN:
         print psr2.thermo.T
         return psr2.thermo.T, nox[0], co[0]
 
+    def main(self):
+        t,n,c, crn = self.combustor()
+        PA = PathwayAnalysis(crn)
+        PA.main()
+
+        return t,n,c
+
+
 if __name__=="__main__":
+    import Settings as settings
     T=[]
     nox=[]
     co=[]
-    crn = CRN()
+    set = settings.Settings()
+    set.main()
+    crn = CRN(set)
     t, n,c = crn.manualcrn()
     T.append(t)
     nox.append(n)
