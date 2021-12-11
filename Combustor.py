@@ -1,9 +1,9 @@
 """
-Contains the conmbustor heat releasee and heat loss mechanisms
+Contains the combustor heat release and heat loss mechanisms
 """
 import numpy as np
 import Combustor_CRN as ccrn
-
+import CRNPIV_data as crnpiv
 
 class Combustor:
     def __init__(self, settings):
@@ -27,6 +27,11 @@ class Combustor:
         T_air_main"""
 
     def heat_loss(self):
+        """
+        Calculates radiative heat loss through a transparent quartz combustor
+        :return:
+        Q_rad:
+        """
         Q_therm = self.settings.P_therm
         Q_in = self.settings.Q_in
         A_x = 3.14 * (self.Dia ** 2.0) / 4.0
@@ -44,15 +49,30 @@ class Combustor:
         return Q_rad
 
     def combustor_chemistry(self, Q_rad):
+        """
+        Calls the Combustor_CRN class which contains a CRN model of the combustor. This function also takes heat loss
+        as an input and passes it to the CRN.
+        :param Q_rad:
+        :return:
+        """
         U = Q_rad/self.A_comb
         crn = ccrn.CRN(self.settings,U,self.A_comb)
+        piv_dat = crnpiv.CRNPIV_data()
+        piv_dat.main()
+        crn.connect = piv_dat.connect
+        crn.alpha_mat = piv_dat.alpha_mat
+        crn.crn_def = piv_dat.reactors
+        crn.outlet = piv_dat.outlet
+        crn.vol_comb = piv_dat.vol_comb_sector
+        print "Volume comb =",crn.vol_comb
         t, n, c = crn.main()
 
         return t,n,c
 
     def combustor(self):
         qrad = self.heat_loss()
-        t,n,c = self.combustor_chemistry(qrad)
+        #t,n,c = self.combustor_chemistry(qrad)
+        t, n, c = self.combustor_chemistry(0)
 
 
 

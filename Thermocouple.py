@@ -54,7 +54,7 @@ class Thermocouple:
         """
         dx = 0.001
         h = self.convection_thermocouple()
-        area_rad_tc = (math.pi/4.0)*self.dia_tc**2 + math.pi*self.dia_tc*0.10
+        area_rad_tc = (math.pi/4.0)*self.dia_tc**2.0 + math.pi*self.dia_tc*0.10
         area_rad_chamber = math.pi*self.dia_chamber*0.1
 
         area_conv = math.pi*self.dia_tc*0.10

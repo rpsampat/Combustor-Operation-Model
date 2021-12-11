@@ -271,6 +271,8 @@ class PathwayAnalysis:
         diction['Thermal NOx'] = {}
         diction['Prompt NOx'] = {}
         diction['Reburn NOx'] = {}
+        diction['N2O NOx'] = {}
+        diction['NNH NOx'] = {}
         #diction['NOx Destr Rate'] = {}
         #diction['O Alt consump'] = {}
         #diction['NOx Net Rate(bin)'] = {}
@@ -282,6 +284,8 @@ class PathwayAnalysis:
             diction['NOx Net Rate'][zone] =[]
             #diction['NOx Net Rate(bin)'][zone] =[]
             diction['Thermal NOx'][zone] =[]
+            diction['N2O NOx'][zone] = []
+            diction['NNH NOx'][zone] = []
             diction['Prompt NOx'][zone] =[]
             diction['Reburn NOx'][zone] =[]
             for reactor in self.combustor_crn[zone]:
@@ -313,6 +317,18 @@ class PathwayAnalysis:
                 if thermalpath > 0:
                     tnox = thermalpath
                 diction['Thermal NOx'][zone].append(tnox)
+                # n2o pathway
+                n2opath = self.n2o_pathway(reactor)
+                tnox = 1e-15
+                if n2opath > 0:
+                    tnox = n2opath
+                diction['N2O NOx'][zone].append(tnox)
+                # nnh pathway
+                nnhpath = self.nnh_pathway(reactor)
+                tnox = 1e-15
+                if thermalpath > 0:
+                    tnox = nnhpath
+                diction['NNH NOx'][zone].append(tnox)
                 # promptnox
                 ppath = self.prompt_pathway(reactor)
                 phcn = 1e-20
@@ -344,23 +360,37 @@ class PathwayAnalysis:
         for k in leg:
             dat_samp = []
             X = np.arange(len(self.pathway[k].keys()))
+            max_val = 0
+            min_val = 100
             for zone in self.pathway[k]:
                 dat_samp.append(self.pathway[k][zone][-1])
+                if max_val<self.pathway[k][zone][-1]:
+                    max_val = self.pathway[k][zone][-1]*1.75
+                if min_val>self.pathway[k][zone][-1]:
+                    min_val = self.pathway[k][zone][-1]*0.75
             if k == "NOx Net Rate":
-                ax2.bar(X + spacing, dat_samp, width=0.25, align='center',
-                       tick_label=["zone %d" % num for num in self.pathway[k].keys()])
+                print dat_samp
+                #ax2.bar(X + spacing, dat_samp, width=0.125, align='center',
+                 #      tick_label=["%d" % num for num in self.pathway[k].keys()])
+
+                ax2.scatter(X, dat_samp)
+                ax2.set_xticks(range(len(self.pathway[k])))
+                ax2.set_xticklabels(["%d" % num for num in self.pathway[k].keys()])
+                ax2.set_ylim([min_val,max_val])
             else:
-                ax.bar(X + spacing, dat_samp, width = 0.25, align = 'center',
-                   tick_label=["zone %d" % num for num in self.pathway[k].keys()])
-            spacing = spacing + 0.25
+                ax.bar(X + spacing, dat_samp, width = 0.125, align = 'center',
+                   tick_label=["%d" % num for num in self.pathway[k].keys()])
+                spacing = spacing + 0.125
 
         ax.set_yscale('log')
         leg.remove("NOx Net Rate")
         ax.legend(labels=leg)
         ax.set_ylabel('Rate of NOx production (mol/m^3-s)')
-        ax2.set_yscale('log')
+        ax.set_xlabel('Reactors')
+        #ax2.set_yscale('log')
         ax2.legend(labels=["NOx Net Rate"])
         ax2.set_ylabel('Rate of NOx production (mol/m^3-s)')
+        ax2.set_xlabel('Reactors')
         plt.show()
 
     def main(self):

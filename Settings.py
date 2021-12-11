@@ -20,6 +20,7 @@ class Settings:
         self.T_in = 0
         self.Q_in =0
         self.Y_comp = {}
+        self.enthalpy_inlet = 0
         self.main()
 
 
@@ -70,7 +71,7 @@ class Settings:
             self.LHV = self.LHV_H2_calc(gas)  # MJ/kg
             self.AF_stoic = (MW_O2 + 3.76 * MW_N2) / 2 * MW_H2
 
-        self.mdot_fuel = (self.P_therm/self.LHV)*(1/1000.0)  # kg/s
+        self.mdot_fuel = (self.P_therm/self.LHV)*(1.0/1000.0)  # kg/s
         gas.TPY = 293.15, ct.one_atm, {self.fuel:1.0}  # NTP
         self.vdot_fuel = (self.mdot_fuel/gas.density) * 60000.0  # lnpm
         self.mdot_air = self.AF_stoic * self.mdot_fuel / self.phi
@@ -79,13 +80,38 @@ class Settings:
         self.mdot_total = self.mdot_air + self.mdot_fuel
         air.TP = self.T_air, ct.one_atm
         H_mix = (gas.enthalpy_mass*self.mdot_fuel + air.enthalpy_mass * self.mdot_air)/self.mdot_total
+        self.enthalpy_inlet = H_mix
         self.Y_comp = {self.fuel: self.mdot_fuel / self.mdot_total,
                        'O2': air.Y[air_species.index('O2')] * self.mdot_air / self.mdot_total,
                        'N2': air.Y[air_species.index('N2')] * self.mdot_air / self.mdot_total,
                        'AR': air.Y[air_species.index('AR')] * self.mdot_air / self.mdot_total}
+
         gas.HPY = H_mix, ct.one_atm, self.Y_comp
         self.Q_in = H_mix*self.mdot_total
         self.T_in = gas.T
+
+        res1 = ct.Reservoir(gas)
+        gas.TPY = 2000,ct.one_atm, self.Y_comp
+        react = ct.IdealGasReactor(gas, energy='on')
+        vol_comb = (3.14 / 4.0) * (0.215 ** 2.0) * 0.49  # m^3
+        react.volume = vol_comb/12.0
+        mfc1 = ct.MassFlowController(res1,react,mdot = self.mdot_total)
+        res2 = ct.Reservoir(gas)
+        mfc2 = ct.MassFlowController(react,res2,mdot = self.mdot_total)
+        net = ct.ReactorNet([react])
+        dt = 1e-4
+        tf = dt
+        # net.advance_to_steady_state()
+        for i in range(int(5e5)):
+            net.advance(tf)
+            tf = tf + dt
+
+        print react.thermo.T
+        print "O2=",react.thermo.X[species.index('O2')]
+        print "CO2=",react.thermo.X[species.index('CO2')]
+        print "CO=", react.thermo.X[species.index('CO')]
+        print "Volume settings reactor=",react.volume
+
 
 
 

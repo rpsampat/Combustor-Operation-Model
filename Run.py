@@ -9,13 +9,13 @@ class Run:
 
     def __init__(self):
         self.P_min = 60
-        self.P_max = 100
+        self.P_max = 70
         self.p_step = 10
         self.P_Range = len(np.arange(self.P_min, self.P_max,self.p_step))
 
-        self.eq_min = 0.6
-        self.eq_max = 0.85
-        self.eq_step = 0.05
+        self.eq_min = 0.8
+        self.eq_max = 0.9
+        self.eq_step = 0.1
         self.eq_range = len(np.arange(self.eq_min, self.eq_max, self.eq_step))
 
         self.P_therm = np.zeros((self.eq_range, self.P_Range))
@@ -45,7 +45,9 @@ class Run:
         for i in range(self.eq_range):
             power = self.P_min
             for j in range(self.P_Range):
-                T_heater = 273.15+600
+                print "Power=",power
+                print "Phi=",phi
+                T_heater = 273.15+400
                 settings = st.Settings(self.fuel, power, phi, T_heater)
                 burner = bh.BurnerHead(settings, T_heater)
                 combustor = comb.Combustor(settings)
