@@ -4,6 +4,7 @@ import numpy as np
 from numpy import linalg
 import matplotlib.pyplot as plt
 from pathway_analysis import PathwayAnalysis
+import Combustor_HeatLoss as CHL
 
 
 class CRN:
@@ -34,8 +35,12 @@ class CRN:
         self.outlet = {6:1.0}  # dictionary of reactor numbers serving as outlets of the combustor and fraction of
         #  total outflow going into outlet resevoir
         self.vol_comb = 0.01778
+        self.wall_reactor ={} # {reactor id: wall area....}
         self.heat_loss = {}#{4:Q_loss, 6: Q_loss}  # {zoneid:heat loss W/m^2}
         self.wall_area = {}#{4:wall_area/2.0, 6: wall_area/2.0}
+        self.adiabatic = True
+        self.case_num = 1
+        self.heat_loss_reduc_fact = 1.0
 
 
     def mass_balance(self):
@@ -146,6 +151,23 @@ class CRN:
         T_out.append(T_sum / m_sum)
         return NOx_out,CO_out,CO2_out,CH4_out,O2_out,H2O_out,T_out,D_out
 
+    def heatloss(self, crn):
+        #Q = 0.3*60000/12
+        #area_total= np.sum([self.wall_reactor[j] for j in self.wall_reactor.keys()])
+        for r in self.wall_reactor:
+            if self.heat_loss_reduc_fact<1.0 and r==9:
+                continue
+            num_react = len(crn[r])
+            gas = crn[r][0].thermo
+            res = ct.Reservoir(gas)
+            hl_obj = CHL.HeatLossModel()
+            hl_obj.main(self.wall_reactor[r][1],self.case_num)
+            for i in range(num_react):
+                w = ct.Wall(crn[r][i],res,A=self.wall_reactor[r][0]/num_react,\
+                            Q = hl_obj.Qloss)
+
+        return 0
+
     def combustor(self):
         gas = ct.Solution('gri30.cti')
         air = ct.Solution('air.cti')
@@ -160,7 +182,7 @@ class CRN:
         gas.HPY = self.enthalpy_inlet, ct.one_atm, self.Y_comp  # inlet gas state definition
         res_inlet = ct.Reservoir(gas)
         res_outlet = ct.Reservoir(gas)
-        gas.TPY = 1500, ct.one_atm, self.Y_comp
+        gas.TPY = 2500, ct.one_atm, self.Y_comp
 
         """psr_test = ct.IdealGasReactor(gas, energy=ener)
         net_test = ct.ReactorNet([psr_test])
@@ -243,14 +265,19 @@ class CRN:
             """val = ct.Valve(combustor_crn[outlet][-1], res_outlet)
             kv = self.massflow[outlet-1] / v_fact
             val.set_valve_coeff(kv)"""
-
+        # Heat loss model
+        if self.adiabatic == False:
+            self.heatloss(combustor_crn)
+        else:
+            pass
+        # Solving reactor network
         net = ct.ReactorNet(reactor_net)
-        print combustor_crn
         print "MFCs=",len(mfc_rec)
-        dt = 1e-6
+        dt = 1e-4
         tf = dt
         #net.advance_to_steady_state()
-        for i in range(int(1e7)):
+        for i in range(int(1e5)):
+            #print i
             net.advance(tf)
             tf = tf + dt
 
@@ -293,47 +320,17 @@ class CRN:
         print psr2.thermo.T
         return psr2.thermo.T, nox[0], co[0]
 
-    def emiss_plot(self, combustor_crn):
+    def emiss_plot(self, combustor_crn,data):
         leg = ["NOx","CO"]
         leg1 = ["CO2","CH4"]
         leg2 = ["O2", "H2O"]
         zones = combustor_crn.keys()
         X = np.arange(len(zones))
-        data ={}
-        for z in zones:
-            nox_list, co_list, co2_list, ch4_list, o2_list, h2o_list, Temp_list, D_list \
-                = self.emiss(combustor_crn[z])
-            nox = np.mean(nox_list)
-            co = np.mean(co_list)
-            co2 = np.mean(co2_list)
-            ch4 = np.mean(ch4_list)
-            o2 = np.mean(o2_list)
-            h2o = np.mean(h2o_list)
-            Temp = np.mean(Temp_list)
-            Density = np.mean(D_list)
-            try:
-                data[0].append(nox)
-                data[1].append(co)
-                data[2].append(co2)
-                data[3].append(ch4)
-                data[4].append(o2)
-                data[5].append(h2o)
-                data[6].append(Temp)
-                data[7].append(Density)
-            except:
-                data[0] = [nox]
-                data[1] = [co]
-                data[2] = [co2]
-                data[3] = [ch4]
-                data[4] = [o2]
-                data[5] = [h2o]
-                data[6] = [Temp]
-                data[7] = [Density]
 
         fig, ax = plt.subplots()
         ax.bar(X , data[0], width=0.25, align='center', tick_label=["%d" % num for num in zones], label="NOx")
         #ax.bar(X + 0.25, data[1], width=0.25, align='center', tick_label=["%d" % num for num in zones])
-        ax.set_yscale('log')
+        #ax.set_yscale('log')
         #ax.legend(labels=leg)
         ax.set_ylabel("NOx dry mole fraction at 15% O2 (ppm)")
         ax.set_xlabel("Reactor")
@@ -407,12 +404,48 @@ class CRN:
         plt.show()
 
 
+    def comparitive(self,combustor_crn):
+        zones = combustor_crn.keys()
+        X = np.arange(len(zones))
+        data = {}
+        for z in zones:
+            nox_list, co_list, co2_list, ch4_list, o2_list, h2o_list, Temp_list, D_list \
+                = self.emiss(combustor_crn[z])
+            nox = np.mean(nox_list)
+            co = np.mean(co_list)
+            co2 = np.mean(co2_list)
+            ch4 = np.mean(ch4_list)
+            o2 = np.mean(o2_list)
+            h2o = np.mean(h2o_list)
+            Temp = np.mean(Temp_list)
+            Density = np.mean(D_list)
+            try:
+                data[0].append(nox)
+                data[1].append(co)
+                data[2].append(co2)
+                data[3].append(ch4)
+                data[4].append(o2)
+                data[5].append(h2o)
+                data[6].append(Temp)
+                data[7].append(Density)
+            except:
+                data[0] = [nox]
+                data[1] = [co]
+                data[2] = [co2]
+                data[3] = [ch4]
+                data[4] = [o2]
+                data[5] = [h2o]
+                data[6] = [Temp]
+                data[7] = [Density]
+
+        return data
 
     def main(self):
         self.massflow = self.mass_balance()
         comb_crn = self.combustor()
         zones = comb_crn.keys()
-        self.emiss_plot(comb_crn)
+        data = self.comparitive(comb_crn)
+        self.emiss_plot(comb_crn,data)
         nox, co, co2, ch4,o2,h2o,Temp,rho = self.emiss([comb_crn[zones[-1]][-1]])
         psr = comb_crn[zones[10]][-1]
         print "Temperature=",psr.thermo.T
@@ -425,6 +458,18 @@ class CRN:
         print "CO2=",co2
 
         return t,n,c
+
+    def main2(self):
+        self.massflow = self.mass_balance()
+        comb_crn = self.combustor()
+        zones = comb_crn.keys()
+        data = self.comparitive(comb_crn)
+        psr = comb_crn[zones[10]][-1]
+        print "Temperature=", psr.thermo.T
+
+        return data
+
+
 
 
 if __name__=="__main__":

@@ -4,6 +4,7 @@ using a Matlab script
 """
 import numpy as np
 import math
+import os
 import Combustor_CRN as CombCRN
 
 class CRNPIV_data:
@@ -16,6 +17,8 @@ class CRNPIV_data:
         self.zeroadjustface={}
         self.connect={}
         self.alpha_mat = {}
+        self.wall_face ={}
+        self.reactor_wall={}
         self.outlet = {14:[]}
         self.volume =0
         self.Dia = 0.215
@@ -34,11 +37,10 @@ class CRNPIV_data:
         # reading reactor volumes
         ang_sweep = (2.0*math.pi/12.0) # m
         ang_sweep_nozzle = 0.00667#math.pi*0.00667/2.0#m
-        near_jet = [1,2,3,12]
+        near_jet = [1,2,3,4]
         num_react = 1 # number of reactors in zone
         outlet_react_area = (0.49 - 0.221) * (0.103)*ang_sweep
         vol_jet = 0
-        sweep_rad =0
         with open("crnvolume.dat") as file:
             line = file.readlines()
             for i in range(len(line)):
@@ -55,7 +57,7 @@ class CRNPIV_data:
                         num_react = 1
                         vol_curr = float(ln[1]) * 1e-6 * ang_sweep * sweep_rad
                     self.volume = self.volume + vol_curr
-                    self.reactors[reactor_id] = [num_react, vol_curr]
+                    self.reactors[reactor_id] = [num_react, vol_curr, float(ln[3])] # [number of reactors in zone, volume of zone, xdistance from burner head]
                     self.connect[reactor_id] = []
         vol_eff = self.vol_comb_sector-vol_jet
         for i in self.reactors:
@@ -74,6 +76,15 @@ class CRNPIV_data:
                 else:
                     ln = line[i].split()
                     self.velflux[ln[0]+ln[1]] = float(ln[2])
+        # reading wall faces
+        with open("walledges.dat") as file:
+            line = file.readlines()
+            for i in range(len(line)):
+                if i==0:
+                    continue
+                else:
+                    ln = line[i].split()
+                    self.wall_face[ln[0]] = float(ln[1])*(1e-3)*math.pi*self.Dia/12.0
 
     def facelist_gen(self):
         for psr in self.nodes.keys():
@@ -98,13 +109,14 @@ class CRNPIV_data:
             for psr in self.facelist.keys():
                 faces = self.facelist[psr]
                 face_match = (face in faces)
+                rev_face = face[::-1]
                 rev_face_match = (face[::-1] in faces)
                 # to order a face named as a1b2 to b2a1 to check for reversed index
-                if len(face)>2:
+                if len(face) > 2:
                     # ASCII values from 1-9 is 49-57
                     for i in range(len(face)):
                         asc_val = ord(face[i])
-                        if asc_val>48 and asc_val<58:
+                        if asc_val > 48 and asc_val < 58:
                             rev_face = face[i-1] + face[i]
                             break
                     face2 = face.replace(rev_face,'')
@@ -116,15 +128,25 @@ class CRNPIV_data:
                     cond3 = rev_face_match and self.velflux[face] < 0.0
                     condx = cond3
 
+                # faces defined in clockwise direction such that an outflow will have a positive value
+                # for a face defined in the right order
                 cond1 = face_match and self.velflux[face] > 0.0
                 cond2 = face_match and self.velflux[face] < 0.0
                 cond3 = rev_face_match and self.velflux[face] < 0.0
                 cond4 = rev_face_match and self.velflux[face] > 0.0
                 cond5 = face_match and self.velflux[face] == 0.0
                 cond6 = rev_face_match and self.velflux[face] == 0.0
+                cond7 = (face_match or rev_face_match) and (face in self.wall_face or rev_face in self.wall_face)
+                if cond7:
+                    try:
+                        self.reactor_wall[psr] = [self.wall_face[face], self.reactors[psr][2]]
+                    except:
+                        self.reactor_wall[psr] = [self.wall_face[rev_face], self.reactors[psr][2]]
                 if cond1 or cond3:
+                    # outflow from current reactor
                     self.commonfaces[face][0]=psr
                 elif cond2 or cond4:
+                    # inflow in current reactor
                     self.commonfaces[face][1]=psr
                 elif cond5 or cond6:
                     try:
@@ -191,7 +213,9 @@ class CRNPIV_data:
         print self.connect
         print self.alpha_mat
 
-    def main(self):
+    def main(self,case_num):
+        case = {1:"phi06",2:"phi08",3:"phi08_N2"}
+        os.chdir('C:/Users/rishikeshsampa/Documents/Research/AGNES_proletariat/'+case[case_num]+'/')
         self.readata()
         self.facelist_gen()
         self.common_face()
@@ -199,7 +223,7 @@ class CRNPIV_data:
 
 if __name__=="__main__":
     obj = CRNPIV_data()
-    obj.main()
+    obj.main(3)
     """obj.readata()
     obj.facelist_gen()
     obj.common_face()

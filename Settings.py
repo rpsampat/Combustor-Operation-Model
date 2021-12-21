@@ -3,7 +3,7 @@ import cantera as ct
 
 class Settings:
 
-    def __init__(self, fuel, P_therm, phi, T_heater):
+    def __init__(self, fuel, P_therm, phi, T_heater,vdot_N2):
         self.P_therm = P_therm  # kW
         self.fuel = fuel  # 'CH4'/'H2'/'CH4+H2'
         self.LHV = 0
@@ -12,15 +12,18 @@ class Settings:
         self.O2_perc = 0
         self.mdot_fuel = 0  # kg/s
         self.mdot_air = 0 # kg/s
+        self.mdot_N2 = 0 # kg/s
         self.mdot_total = 0 #kg/s
         self.vdot_fuel = 0 # lnpm
         self.vdot_air = 0 # lnpm
+        self.vdot_N2 =vdot_N2 # lnpm
         self.T_air = T_heater
         self.T_fuel = 273.15 + 15
         self.T_in = 0
         self.Q_in =0
         self.Y_comp = {}
         self.enthalpy_inlet = 0
+        self.enthalpy_outlet =0
         self.main()
 
 
@@ -54,6 +57,7 @@ class Settings:
 
     def main(self):
         gas = ct.Solution('gri30.cti')
+        gas_diluent = ct.Solution('gri30.cti')
         air = ct.Solution('air.cti')
         species = gas.species_names
         air_species = air.species_names
@@ -77,13 +81,16 @@ class Settings:
         self.mdot_air = self.AF_stoic * self.mdot_fuel / self.phi
         air.TP = 293.15, ct.one_atm # NTP
         self.vdot_air = (self.mdot_air / air.density) * 60000  # lnpm
-        self.mdot_total = self.mdot_air + self.mdot_fuel
+        gas_diluent.TPY = 293.15, ct.one_atm, {'N2': 1.0}  # NTP
+        self.mdot_N2 = self.vdot_N2 * gas_diluent.density/60000 # kg/s
+        self.mdot_total = self.mdot_air + self.mdot_fuel + self.mdot_N2
         air.TP = self.T_air, ct.one_atm
-        H_mix = (gas.enthalpy_mass*self.mdot_fuel + air.enthalpy_mass * self.mdot_air)/self.mdot_total
+        H_mix = (gas.enthalpy_mass*self.mdot_fuel + air.enthalpy_mass *\
+                 self.mdot_air + gas_diluent.enthalpy_mass*self.mdot_N2)/self.mdot_total
         self.enthalpy_inlet = H_mix
         self.Y_comp = {self.fuel: self.mdot_fuel / self.mdot_total,
                        'O2': air.Y[air_species.index('O2')] * self.mdot_air / self.mdot_total,
-                       'N2': air.Y[air_species.index('N2')] * self.mdot_air / self.mdot_total,
+                       'N2': (air.Y[air_species.index('N2')] * self.mdot_air +self.mdot_N2)/ self.mdot_total,
                        'AR': air.Y[air_species.index('AR')] * self.mdot_air / self.mdot_total}
 
         gas.HPY = H_mix, ct.one_atm, self.Y_comp
@@ -105,6 +112,8 @@ class Settings:
         for i in range(int(5e5)):
             net.advance(tf)
             tf = tf + dt
+
+        self.enthalpy_outlet = react.thermo.enthalpy_mass
 
         print react.thermo.T
         print "O2=",react.thermo.X[species.index('O2')]
